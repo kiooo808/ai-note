@@ -1,280 +1,64 @@
-import React, { useEffect, useState, useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
+import Image from '@tiptap/extension-image';
+import TaskList from '@tiptap/extension-task-list';
+import TaskItem from '@tiptap/extension-task-item';
 import { WikiLink } from './Extensions';
 import { useGraphStore } from '../store/graphStore';
-import { db, type NoteNode } from '../db';
-
-// 👈 核心修复：显式给 STYLES 加上 React.CSSProperties 强类型约束，消灭所有 flexDirection 报错
-const STYLES: Record<string, React.CSSProperties> = {
-  container: { width: '100%', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#ffffff', boxSizing: 'border-box', position: 'relative', overflow: 'hidden' },
-  header: { padding: '20px 16px 10px 16px', display: 'flex', flexDirection: 'column', gap: '14px', flexShrink: 0 },
-  titleInput: { fontSize: '22px', fontWeight: '700', width: '100%', border: 'none', borderBottom: '1px solid #e5e5ea', paddingBottom: '10px', outline: 'none', color: '#1c1c1e' },
-  btnGroup: { display: 'flex', gap: '8px' },
-  btnRef: { flex: 2, padding: '8px 10px', background: '#f2f2f7', color: '#0071e3', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' },
-  btnDel: { flex: 1, padding: '8px 10px', background: '#fff2f2', color: '#ff3b30', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' },
-  scrollBody: { flex: 1, overflowY: 'auto', padding: '0 16px 20px 16px', display: 'flex', flexDirection: 'column', gap: '16px' },
-  editorWrapper: { border: '1px solid #e5e5ea', borderRadius: '12px', padding: '14px', background: '#ffffff', boxShadow: '0 2px 8px rgba(0,0,0,0.02)', minHeight: '260px' },
-  backlinkSection: { marginTop: '10px', borderTop: '1px dashed #e5e5ea', paddingTop: '16px' },
-  backlinkTitle: { fontSize: '13px', fontWeight: '700', color: '#8e8e93', marginBottom: '8px', letterSpacing: '0.5px' },
-  backlinkTag: { padding: '6px 10px', backgroundColor: '#f2f2f7', borderRadius: '6px', fontSize: '12px', fontWeight: '500', color: '#0071e3', cursor: 'pointer' },
-  pickerOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255, 255, 255, 0.96)', backdropFilter: 'blur(10px)', zIndex: 100, padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }
-};
-
-export const RightEditorPanel: React.FC = () => {
-  const activeNodeId = useGraphStore(state => state.activeNodeId);
-  const syncNodeContent = useGraphStore(state => state.syncNodeContent);
-  const loadGraphFromDB = useGraphStore(state => state.loadGraphFromDB);
-  const deleteNode = useGraphStore(state => state.deleteNode);
-  const currentProjectId = useGraphStore(state => state.currentProjectId);
-  const setActiveNode = useGraphStore(state => state.setActiveNode);
-
-  const [note, setNote] = useState<NoteNode | null>(null);
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [availableNodes, setAvailableNodes] = useState<NoteNode[]>([]);
-  const [backlinks, setBacklinks] = useState<NoteNode[]>([]);
-
-  const isSwithingNode = useRef(false);
-
+import type { NoteNode } from '../db';
+import { exportNote } from '../markdown';
+import { cleanHTML } from '../backup';
+import { Modal } from './Modal';
+export function RightEditorPanel() {
+  const id = useGraphStore(s => s.activeNodeId);
+  const note = useGraphStore(s => s.notes.find(n => n.id === id));
+  return note ? <NoteEditor key={note.id} note={note} /> : <div className="editor-empty"><span>↗</span><h2>给想法留个位置</h2><p>从画布或笔记列表选择一个想法，开始记录，再用引用把它们连接起来。</p><small>保存在当前浏览器 · 支持导出备份</small></div>;
+}
+function NoteEditor({ note }: { note: NoteNode }) {
+  const { notes, edges, saveStatus, syncNodeContent, deleteNode, retrySave, setActiveNode } = useGraphStore();
+  const imageInput = useRef<HTMLInputElement>(null);
+  const [picker, setPicker] = useState(false), [query, setQuery] = useState(''), [deleting, setDeleting] = useState(false), [message, setMessage] = useState('');
   const editor = useEditor({
-    extensions: [
-      StarterKit, 
-      WikiLink,
-      Placeholder.configure({
-        placeholder: '在此输入模块描述，点击上方按钮或使用双链引用其他组件...',
-        emptyEditorClass: 'is-empty',
-      }),
-    ],
-    editorProps: {
-      attributes: { 
-        class: 'prose focus:outline-none', 
-        style: "min-height: 200px; outline: none; font-size: 15px; color: #1c1c1e;" // 👈 顺便修复了之前单引号引起的 Invalid Character
-      }
-    },
-    onUpdate: ({ editor }) => {
-      if (isSwithingNode.current || !note) return;
-      const html = editor.getHTML();
-      setNote(prev => prev ? { ...prev, content: html } : null);
-      syncNodeContent(note.id, note.title, html);
-      parseAndSyncEdges(note.id, html);
-    }
+    extensions: [StarterKit, WikiLink, Image.configure({ allowBase64: true }), TaskList, TaskItem.configure({ nested: true, a11y: { checkboxLabel: (_node, checked) => checked ? '任务已完成' : '任务未完成' } }), Placeholder.configure({ placeholder: '写下一个想法，或引用另一条笔记…' })],
+    content: cleanHTML(note.content),
+    shouldRerenderOnTransaction: true,
+    editorProps: { attributes: { role: 'textbox', 'aria-label': '笔记正文', 'aria-multiline': 'true' } },
+    onUpdate: ({ editor }) => { const n = useGraphStore.getState().notes.find(n => n.id === note.id) || note; void syncNodeContent(n.id, n.title, editor.getHTML()); }
   });
-
-  const parseAndSyncEdges = async (sourceId: string, html: string) => {
-    if (!currentProjectId || isSwithingNode.current) return;
-    
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const linkElements = doc.querySelectorAll('.wiki-link-node');
-    
-    const currentTargetIds = Array.from(new Set(
-      Array.from(linkElements).map(el => el.getAttribute('data-id')).filter(Boolean)
-    )) as string[];
-
-    await db.transaction('rw', [db.edges, db.backlinks], async () => {
-      await db.edges.where('projectId').equals(currentProjectId).and(e => e.source === sourceId).delete();
-      await db.backlinks.where('projectId').equals(currentProjectId).and(bl => bl.sourceId === sourceId).delete();
-
-      if (currentTargetIds.length > 0) {
-        const newEdges = currentTargetIds.map(tId => ({
-          id: `${sourceId}->${tId}`,
-          projectId: currentProjectId,
-          source: sourceId,
-          target: tId,
-          relation: 'references'
-        }));
-        await db.edges.bulkAdd(newEdges);
-
-        const newBacklinks = currentTargetIds.map(tId => ({
-          projectId: currentProjectId,
-          sourceId,
-          targetId: tId
-        }));
-        await db.backlinks.bulkAdd(newBacklinks);
-      }
-    });
-
-    await loadGraphFromDB();
-    fetchBacklinks(sourceId);
-  };
-
-  const fetchBacklinks = async (targetId: string) => {
-    if (!currentProjectId) return;
-    const inboundIndices = await db.backlinks
-      .where('projectId').equals(currentProjectId)
-      .and(bl => bl.targetId === targetId)
-      .toArray();
-      
-    const sourceIds = inboundIndices.map(bl => bl.sourceId);
-    if (sourceIds.length === 0) {
-      setBacklinks([]);
-      return;
-    }
-    const sourceNodes = await db.nodes.where('id').anyOf(sourceIds).toArray();
-    setBacklinks(sourceNodes);
-  };
-
-  useEffect(() => {
-    if (!activeNodeId) {
-      setNote(null);
-      return;
-    }
-
-    isSwithingNode.current = true;
-
-    db.nodes.get(activeNodeId).then(data => {
-      if (data) {
-        setNote(data);
-        const isContentEmpty = !data.content || data.content === '<p></p>' || data.content === '<h1>新节点</h1><p>在此输入模块描述...</p>';
-        if (editor) {
-          editor.commands.setContent(isContentEmpty ? '' : data.content);
-        }
-        fetchBacklinks(activeNodeId);
-      }
-      setTimeout(() => { isSwithingNode.current = false; }, 60);
-    });
-  }, [activeNodeId, editor]);
-
-  useEffect(() => {
-    const handleWikiClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target?.classList.contains('wiki-link-node') || target?.parentElement?.classList.contains('wiki-link-node')) {
-        const nodeEl = target.classList.contains('wiki-link-node') ? target : target.parentElement;
-        const nodeId = nodeEl?.getAttribute('data-id');
-        if (nodeId) {
-          e.preventDefault();
-          setActiveNode(nodeId);
-        }
-      }
-    };
-    document.addEventListener('click', handleWikiClick);
-    return () => document.removeEventListener('click', handleWikiClick);
-  }, [setActiveNode]);
-
-  const handleOpenPicker = async () => {
-    if (!note || !currentProjectId) return;
-    const allProjectNodes = await db.nodes.where('projectId').equals(currentProjectId).toArray();
-    const filtered = allProjectNodes.filter(n => n.id !== note.id);
-    
-    if (filtered.length === 0) {
-      alert("请先创建更多组件！");
-      return;
-    }
-    
-    setAvailableNodes(filtered);
-    setSearchQuery('');
-    setIsPickerOpen(true);
-  };
-
-  const handleSelectNode = (targetNode: NoteNode) => {
-    if (editor) {
-      editor.commands.insertContent({
-        type: 'wikiLink',
-        attrs: { id: targetNode.id, title: targetNode.title }
-      });
-    }
-    setIsPickerOpen(false);
-  };
-
-  const handleDelete = async () => {
-    if (!note) return;
-    if (window.confirm(`确定删除【${note.title}】吗？`)) {
-      await deleteNode(note.id);
-    }
-  };
-
-  if (!note) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', textAlign: 'center', color: '#94a3b8', padding: '32px' }}>
-        <span style={{ fontSize: '30px', marginBottom: '12px' }}>👁️‍🗨️</span>
-        <div style={{ fontSize: '14px', fontWeight: '500' }}>未选中组件</div>
-      </div>
-    );
+  const status = saveStatus[note.id] || 'saved';
+  const available = notes.filter(n => n.id !== note.id && n.title.toLowerCase().includes(query.toLowerCase()));
+  const sources = notes.filter(n => edges.some(e => e.source === n.id && e.target === note.id));
+  const toolbar = [
+    { label: '加粗', text: 'B', active: editor?.isActive('bold'), run: () => editor?.chain().focus().toggleBold().run() },
+    { label: '斜体', text: 'I', active: editor?.isActive('italic'), run: () => editor?.chain().focus().toggleItalic().run() },
+    { label: '二级标题', text: 'H2', active: editor?.isActive('heading', { level: 2 }), run: () => editor?.chain().focus().toggleHeading({ level: 2 }).run() },
+    { label: '无序列表', text: '列表', active: editor?.isActive('bulletList'), run: () => editor?.chain().focus().toggleBulletList().run() },
+    { label: '任务清单', text: '☑ 任务', active: editor?.isActive('taskList'), run: () => editor?.chain().focus().toggleTaskList().run() },
+    { label: '代码块', text: '</>', active: editor?.isActive('codeBlock'), run: () => editor?.chain().focus().toggleCodeBlock().run() },
+  ];
+  async function insertImage(file?: File) {
+    if (!file || !editor) return;
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 5 * 1024 * 1024) { setMessage('请选择不超过 5MB 的 PNG、JPEG、WebP 或 GIF 图片。'); return; }
+    try {
+      const data = await new Promise<string>((resolve,reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file); });
+      if (!editor.isDestroyed) editor.chain().focus().setImage({ src: data, alt: file.name }).run();
+      setMessage('图片已嵌入笔记，会随备份一起导出。');
+    } catch { setMessage('图片读取失败，请重试。'); }
   }
-
-  return (
-    <div style={STYLES.container}>
-      <style>{`
-        .ProseMirror {
-          line-height: 1.8 !important;
-        }
-        .ProseMirror p.is-empty::before {
-          content: attr(data-placeholder);
-          float: left;
-          color: #adb5bd;
-          pointer-events: none;
-          height: 0;
-          font-style: italic;
-          font-size: 14px;
-         }
-        .wiki-link-node {
-          vertical-align: middle;
-        }
-      `}</style>
-
-      <div style={STYLES.header}>
-        <input
-          type="text"
-          style={STYLES.titleInput}
-          value={note.title}
-          onChange={(e) => {
-            const newTitle = e.target.value;
-            setNote({ ...note, title: newTitle });
-            syncNodeContent(note.id, newTitle, note.content);
-          }}
-        />
-        
-        <div style={STYLES.btnGroup}>
-          <button onClick={handleOpenPicker} style={STYLES.btnRef}>🔗 引用特定组件</button>
-          <button onClick={handleDelete} style={STYLES.btnDel}>🗑️ 删除</button>
-        </div>
-      </div>
-
-      <div style={STYLES.scrollBody}>
-        <div style={STYLES.editorWrapper}>
-          <EditorContent editor={editor} />
-        </div>
-
-        <div style={STYLES.backlinkSection}>
-          <div style={STYLES.backlinkTitle}>🔗 被以下组件引用 ({backlinks.length})</div>
-          {backlinks.length === 0 ? (
-            <div style={{ fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' }}>暂无反向引用脉络</div>
-          ) : (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-              {backlinks.map(bNode => (
-                <div key={bNode.id} onClick={() => setActiveNode(bNode.id)} style={STYLES.backlinkTag}>
-                  ↩️ {bNode.title}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {isPickerOpen && (
-        <div style={STYLES.pickerOverlay}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#1e293b' }}>选择要引入的双链组件</span>
-            <button onClick={() => setIsPickerOpen(false)} style={{ border: 'none', background: 'none', color: '#3b82f6', fontWeight: '600', fontSize: '14px' }}>取消</button>
-          </div>
-          <input 
-            type="text" 
-            placeholder="🔍 输入关键字搜索组件..." 
-            value={searchQuery} 
-            onChange={(e) => setSearchQuery(e.target.value)} 
-            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', outline: 'none' }} 
-          />
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {availableNodes.filter(n => n.title.toLowerCase().includes(searchQuery.toLowerCase())).map(nodeItem => (
-              <div key={nodeItem.id} onClick={() => handleSelectNode(nodeItem)} style={{ padding: '12px', borderRadius: '8px', backgroundColor: '#f1f5f9', fontSize: '14px', fontWeight: '500', color: '#1e293b', cursor: 'pointer' }}>
-                📄 {nodeItem.title}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
+  return <div className="note-editor">
+    <header className="note-header"><div className="note-meta"><span className="eyebrow">CONNECTED IDEAS</span><span role="status" className={'save-status ' + status}>{status === 'saving' ? '保存中…' : status === 'error' ? '保存失败，修改已保留' : '已保存到本机'}</span>{status === 'error' && <button onClick={() => void retrySave(note.id)}>重试保存</button>}</div>
+      <input className="note-title" aria-label="笔记标题" value={note.title} placeholder="给想法起个名字" onChange={e => { void syncNodeContent(note.id, e.target.value, editor?.getHTML() || note.content); }} />
+      <div className="note-actions"><button onClick={() => { setQuery(''); setPicker(true); }}>↗ 引用想法</button><button onClick={() => exportNote(note.title, editor?.getHTML() || note.content)}>导出 Markdown</button><button className="danger-text" onClick={() => setDeleting(true)}>移入回收站</button></div>
+    </header>
+    {message && <p className="editor-message" role="status">{message}<button aria-label="关闭编辑提示" onClick={() => setMessage('')}>×</button></p>}
+    <div className="note-scroll"><div className="editor-surface">
+      <div className="editor-toolbar" role="toolbar" aria-label="正文格式">{toolbar.map(t => <button key={t.label} title={t.label} aria-label={t.label} aria-pressed={!!t.active} onClick={t.run}>{t.text}</button>)}<button onClick={() => imageInput.current?.click()}>图片</button><button aria-label="撤销" disabled={!editor?.can().undo()} onClick={() => editor?.chain().focus().undo().run()}>撤销</button><button aria-label="重做" disabled={!editor?.can().redo()} onClick={() => editor?.chain().focus().redo().run()}>重做</button></div>
+      <input className="visually-hidden" ref={imageInput} aria-label="选择笔记图片" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={e => { void insertImage(e.target.files?.[0]); e.target.value = ''; }} />
+      <div onClick={e => { const link = (e.target as HTMLElement).closest('.wiki-link-node[data-id]'); const id = link?.getAttribute('data-id'); if (id) { if (notes.some(n => n.id === id)) setActiveNode(id); else setMessage('这个想法在回收站中，恢复后可再次打开。'); } }} onKeyDown={e => { if (e.key === 'Enter' && (e.target as HTMLElement).classList.contains('wiki-link-node')) { e.preventDefault(); (e.target as HTMLElement).click(); } }}><EditorContent editor={editor} /></div>
+    </div><section className="backlinks"><h3>连接到这里 <small>{sources.length}</small></h3>{sources.length ? sources.map(n => <button key={n.id} onClick={() => setActiveNode(n.id)}>↗ {n.title || '未命名想法'}</button>) : <p>其他笔记引用这个想法后，会显示在这里。</p>}</section></div>
+    {picker && <Modal title="引用一个想法" close={() => setPicker(false)}><input autoFocus aria-label="搜索引用想法" placeholder="搜索想法标题…" value={query} onChange={e => setQuery(e.target.value)} /><div className="picker-results">{available.length ? available.map(n => <button key={n.id} onClick={() => { editor?.chain().focus().insertContent({ type: 'wikiLink', attrs: { id: n.id, title: n.title } }).run(); setPicker(false); }}>↗ {n.title || '未命名想法'}</button>) : <p>{query ? '没有找到匹配的想法，换个关键词试试。' : '还没有其他想法，先新建一条笔记吧。'}</p>}</div><p className="muted">用 Tab 选择，按 Enter 引用，Esc 关闭。</p></Modal>}
+    {deleting && <Modal title="移入回收站？" close={() => setDeleting(false)}><p>「{note.title || '未命名想法'}」和原有连接都会保留，可以随时从回收站恢复。</p><div className="dialog-actions"><button onClick={() => setDeleting(false)}>取消</button><button className="primary" onClick={() => { void deleteNode(note.id).catch((e: Error) => { setMessage(e.message); setDeleting(false); }); }}>确认移入回收站</button></div></Modal>}
+  </div>;
+}

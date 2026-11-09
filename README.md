@@ -1,73 +1,31 @@
-# React + TypeScript + Vite
+# 连接想法
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+用笔记、关系画布和双向引用整理灵感。电脑支持双栏，手机支持画布、最近编辑列表和笔记编辑三种视图。
 
-Currently, two official plugins are available:
+## 功能
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- 笔记独立排队自动保存，显示保存状态；保存失败保留待重试内容。同步写入本机恢复副本，重开页面时尝试恢复。
+- 回收站保留正文与连接，可撤销删除或按项目恢复；不会自动清空。
+- 备份导入前校验版本、字段、重复编号及关联完整性，显示数量。默认合并为独立项目副本，也支持确认后替换全部数据；替换在同一事务中完成。
+- 支持版本 2 旧备份，导出版本 3，包含回收站记录及图片。
+- 最近编辑列表可搜索标题与正文；画布搜索可直接打开笔记。
+- 编辑器支持图片、代码块、任务清单、标题、列表与双向引用。引用窗口可用 Tab / Enter / Esc 操作。
+- Markdown 导出保留任务状态、代码块、图片和 `[[引用]]`。图片嵌入文件，不依赖图片服务器。
 
-## React Compiler
+## 数据与兼容性
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+数据保存在当前浏览器，手机和电脑之间可通过备份转移。图片支持不超过 5MB 的 PNG、JPEG、WebP、GIF。浏览器清理网站数据会删除本机笔记，请定期导出备份。
 
-## Expanding the ESLint configuration
+仓库与部署路径改为 `connected-ideas`，站点显示名称为“连接想法”。为保留现有数据，内部数据库名称延续旧值。升级只替换完全匹配旧版预置欢迎内容的文案，不改写用户笔记。
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 开发与验证
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+npm ci
+npm run dev
+npm run build
+npm run lint
+npm test
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+使用 React、TypeScript、Tiptap、React Flow、Dexie 和 Zustand。自动化测试覆盖快速编辑、失败重试、恢复副本、回收站、备份校验与事务回滚、Markdown 导出。`npm run deploy` 构建后发布到 GitHub Pages 的 gh-pages 分支。
