@@ -1,9 +1,9 @@
 import { create } from 'zustand';
-import { type Node, type Edge, applyNodeChanges, applyEdgeChanges, type OnNodesChange, type OnEdgesChange } from 'reactflow';
-import { db } from '../db';
+import { type Node, type Edge, applyNodeChanges, applyEdgeChanges, type OnNodesChange, type OnEdgesChange, type ReactFlowInstance } from 'reactflow';
+import { db, type Project } from '../db';
 
 interface GraphState {
-  projects: any[];
+  projects: Project[];
   currentProjectId: string | null;
   nodes: Node[];
   edges: Edge[];
@@ -19,10 +19,10 @@ interface GraphState {
   deleteNode: (id: string) => Promise<void>;
   exportBackupData: () => Promise<void>;
   importBackupData: (jsonStr: string) => Promise<boolean>;
-  addNodeAtCenter: (reactFlowInstance: any) => Promise<void>;
+  addNodeAtCenter: (reactFlowInstance: ReactFlowInstance | null) => Promise<void>;
 }
 
-let saveTimeout: any; // 👈 降级为 any 类型，瞬间绕过 Node 环境检查
+let saveTimeout: ReturnType<typeof setTimeout>; // 👈 降级为 any 类型，瞬间绕过 Node 环境检查
 
 export const useGraphStore = create<GraphState>((set, get) => ({
   projects: [],
@@ -161,7 +161,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     const pId = get().currentProjectId;
     if (!pId) return;
 
-    let position = { x: 150, y: 150 };
+    const count = get().nodes.length;
+    let position = { x: 150 + (count % 3) * 190, y: 150 + Math.floor(count / 3) * 110 };
     if (reactFlowInstance) {
       const width = window.innerWidth / 2; 
       const height = window.innerHeight;

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -8,7 +8,7 @@ import { db, type NoteNode } from '../db';
 
 // 👈 核心修复：显式给 STYLES 加上 React.CSSProperties 强类型约束，消灭所有 flexDirection 报错
 const STYLES: Record<string, React.CSSProperties> = {
-  container: { width: '100%', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#ffffff', boxSizing: 'border-box', position: 'relative', overflow: 'hidden' },
+  container: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', backgroundColor: '#ffffff', boxSizing: 'border-box', position: 'relative', overflow: 'hidden' },
   header: { padding: '20px 16px 10px 16px', display: 'flex', flexDirection: 'column', gap: '14px', flexShrink: 0 },
   titleInput: { fontSize: '22px', fontWeight: '700', width: '100%', border: 'none', borderBottom: '1px solid #e5e5ea', paddingBottom: '10px', outline: 'none', color: '#1c1c1e' },
   btnGroup: { display: 'flex', gap: '8px' },
@@ -100,7 +100,7 @@ export const RightEditorPanel: React.FC = () => {
     fetchBacklinks(sourceId);
   };
 
-  const fetchBacklinks = async (targetId: string) => {
+  const fetchBacklinks = useCallback(async (targetId: string) => {
     if (!currentProjectId) return;
     const inboundIndices = await db.backlinks
       .where('projectId').equals(currentProjectId)
@@ -113,29 +113,25 @@ export const RightEditorPanel: React.FC = () => {
       return;
     }
     const sourceNodes = await db.nodes.where('id').anyOf(sourceIds).toArray();
-    setBacklinks(sourceNodes);
-  };
+    if (useGraphStore.getState().activeNodeId === targetId) setBacklinks(sourceNodes);
+  }, [currentProjectId]);
 
   useEffect(() => {
-    if (!activeNodeId) {
-      setNote(null);
-      return;
-    }
-
+    if (!activeNodeId || !editor) return;
+    let cancelled = false;
     isSwithingNode.current = true;
-
-    db.nodes.get(activeNodeId).then(data => {
+    void db.nodes.get(activeNodeId).then(data => {
+      if (cancelled) return;
       if (data) {
         setNote(data);
-        const isContentEmpty = !data.content || data.content === '<p></p>' || data.content === '<h1>新节点</h1><p>在此输入模块描述...</p>';
-        if (editor) {
-          editor.commands.setContent(isContentEmpty ? '' : data.content);
-        }
-        fetchBacklinks(activeNodeId);
+        const empty = !data.content || data.content === '<p></p>' || data.content === '<h1>新节点</h1><p>在此输入模块描述...</p>';
+        editor.commands.setContent(empty ? '' : data.content, { emitUpdate: false });
+        void fetchBacklinks(activeNodeId);
       }
-      setTimeout(() => { isSwithingNode.current = false; }, 60);
+      isSwithingNode.current = false;
     });
-  }, [activeNodeId, editor]);
+    return () => { cancelled = true; };
+  }, [activeNodeId, editor, fetchBacklinks]);
 
   useEffect(() => {
     const handleWikiClick = (e: MouseEvent) => {
@@ -185,11 +181,11 @@ export const RightEditorPanel: React.FC = () => {
     }
   };
 
-  if (!note) {
+  if (!activeNodeId || !note || note.id !== activeNodeId) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', textAlign: 'center', color: '#94a3b8', padding: '32px' }}>
         <span style={{ fontSize: '30px', marginBottom: '12px' }}>👁️‍🗨️</span>
-        <div style={{ fontSize: '14px', fontWeight: '500' }}>未选中组件</div>
+        <div style={{ fontSize: '14px', fontWeight: '500' }}>选择一个想法，开始记录</div><p style={{ fontSize: 13, maxWidth: 240, lineHeight: 1.8 }}>在关系画布中点击组件，或新建一个组件。笔记保存在当前浏览器，可随时导出备份。</p>
       </div>
     );
   }
@@ -218,6 +214,7 @@ export const RightEditorPanel: React.FC = () => {
         <input
           type="text"
           style={STYLES.titleInput}
+          aria-label="笔记标题"
           value={note.title}
           onChange={(e) => {
             const newTitle = e.target.value;
@@ -234,6 +231,14 @@ export const RightEditorPanel: React.FC = () => {
 
       <div style={STYLES.scrollBody}>
         <div style={STYLES.editorWrapper}>
+          <div className="editor-toolbar" role="toolbar" aria-label="正文格式">
+            <button aria-label="加粗" aria-pressed={editor?.isActive('bold') || false} onClick={() => editor?.chain().focus().toggleBold().run()}>B</button>
+            <button aria-label="斜体" aria-pressed={editor?.isActive('italic') || false} onClick={() => editor?.chain().focus().toggleItalic().run()}><i>I</i></button>
+            <button aria-label="二级标题" onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}>H2</button>
+            <button aria-label="无序列表" onClick={() => editor?.chain().focus().toggleBulletList().run()}>列表</button>
+            <button aria-label="撤销" onClick={() => editor?.chain().focus().undo().run()}>撤销</button>
+            <button aria-label="重做" onClick={() => editor?.chain().focus().redo().run()}>重做</button>
+          </div>
           <EditorContent editor={editor} />
         </div>
 
@@ -244,9 +249,9 @@ export const RightEditorPanel: React.FC = () => {
           ) : (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
               {backlinks.map(bNode => (
-                <div key={bNode.id} onClick={() => setActiveNode(bNode.id)} style={STYLES.backlinkTag}>
+                <button key={bNode.id} onClick={() => setActiveNode(bNode.id)} style={STYLES.backlinkTag}>
                   ↩️ {bNode.title}
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -254,7 +259,7 @@ export const RightEditorPanel: React.FC = () => {
       </div>
 
       {isPickerOpen && (
-        <div style={STYLES.pickerOverlay}>
+        <div style={STYLES.pickerOverlay} role="dialog" aria-modal="true" aria-label="选择引用组件">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#1e293b' }}>选择要引入的双链组件</span>
             <button onClick={() => setIsPickerOpen(false)} style={{ border: 'none', background: 'none', color: '#3b82f6', fontWeight: '600', fontSize: '14px' }}>取消</button>
@@ -268,9 +273,9 @@ export const RightEditorPanel: React.FC = () => {
           />
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {availableNodes.filter(n => n.title.toLowerCase().includes(searchQuery.toLowerCase())).map(nodeItem => (
-              <div key={nodeItem.id} onClick={() => handleSelectNode(nodeItem)} style={{ padding: '12px', borderRadius: '8px', backgroundColor: '#f1f5f9', fontSize: '14px', fontWeight: '500', color: '#1e293b', cursor: 'pointer' }}>
+              <button key={nodeItem.id} onClick={() => handleSelectNode(nodeItem)} style={{ padding: '12px', borderRadius: '8px', backgroundColor: '#f1f5f9', fontSize: '14px', fontWeight: '500', color: '#1e293b', cursor: 'pointer' }}>
                 📄 {nodeItem.title}
-              </div>
+              </button>
             ))}
           </div>
         </div>

@@ -1,11 +1,12 @@
-import React, { useEffect } from 'react';
-import ReactFlow, { Background, Controls, MiniMap, useReactFlow, ReactFlowProvider } from 'reactflow';
+import React, { useEffect, useRef } from 'react';
+import ReactFlow, { Background, Controls, MiniMap, useReactFlow, ReactFlowProvider, type Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { useGraphStore } from '../store/graphStore';
 import { db } from '../db';
 
-const GraphInner: React.FC = () => {
+const GraphInner: React.FC<{ onSelect?: () => void }> = ({ onSelect }) => {
   const { nodes, edges, onNodesChange, onEdgesChange, activeNodeId, setActiveNode, loadGraphFromDB, currentProjectId } = useGraphStore();
+  const canvasRef = useRef<HTMLDivElement>(null);
   const reactFlowInstance = useReactFlow(); // 👈 安全地在 Provider 内部调用
 
   useEffect(() => {
@@ -13,6 +14,16 @@ const GraphInner: React.FC = () => {
       loadGraphFromDB();
     }
   }, [currentProjectId, loadGraphFromDB]);
+
+  useEffect(() => {
+    const surface = canvasRef.current;
+    if (!surface) return;
+    const observer = new ResizeObserver(() => {
+      void reactFlowInstance.fitView({ padding: 0.3, maxZoom: 1.2 });
+    });
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, [reactFlowInstance]);
 
   // 监听激活节点，自动平滑追踪聚焦
   useEffect(() => {
@@ -23,7 +34,7 @@ const GraphInner: React.FC = () => {
     }
   }, [activeNodeId, nodes, reactFlowInstance]);
 
-  const onNodeDragStop = async (_: any, node: any) => {
+  const onNodeDragStop = async (_: React.MouseEvent, node: Node) => {
     await db.nodes.update(node.id, { position: node.position });
   };
 
@@ -45,15 +56,16 @@ const GraphInner: React.FC = () => {
   });
 
   return (
-    <div style={{ width: '100%', height: '100%' }}> {/* 👈 放弃 Tailwind，强制原生百分比撑满 */}
+    <div ref={canvasRef} style={{ width: '100%', height: '100%' }}> {/* 👈 放弃 Tailwind，强制原生百分比撑满 */}
       <ReactFlow
         nodes={dynamicNodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeClick={(_, node) => setActiveNode(node.id)}
+        onNodeClick={(_, node) => { setActiveNode(node.id); onSelect?.(); }}
         onPaneClick={() => setActiveNode(null)}
         onNodeDragStop={onNodeDragStop}
+        deleteKeyCode={null}
         fitView
       >
         <Background gap={16} size={1} color="#e5e5ea" />
@@ -64,11 +76,11 @@ const GraphInner: React.FC = () => {
   );
 };
 
-export const LeftGraphPanel: React.FC = () => {
+export const LeftGraphPanel: React.FC<{ onSelect?: () => void }> = ({ onSelect }) => {
   return (
     <div style={{ width: '100%', height: '100%' }}>
       <ReactFlowProvider>
-        <GraphInner />
+        <GraphInner onSelect={onSelect} />
       </ReactFlowProvider>
     </div>
   );
