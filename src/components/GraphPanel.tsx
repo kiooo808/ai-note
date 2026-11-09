@@ -28,11 +28,11 @@ const GraphInner: React.FC<{ onSelect?: () => void }> = ({ onSelect }) => {
   // 监听激活节点，自动平滑追踪聚焦
   useEffect(() => {
     if (!activeNodeId) return;
-    const activeNode = nodes.find(n => n.id === activeNodeId);
+    const activeNode = useGraphStore.getState().nodes.find(n => n.id === activeNodeId);
     if (activeNode?.position) {
       reactFlowInstance.setCenter(activeNode.position.x, activeNode.position.y, { zoom: 1.2, duration: 600 });
     }
-  }, [activeNodeId, nodes, reactFlowInstance]);
+  }, [activeNodeId, reactFlowInstance]);
 
   const onNodeDragStop = async (_: React.MouseEvent, node: Node) => {
     await db.nodes.update(node.id, { position: node.position });
@@ -43,9 +43,9 @@ const GraphInner: React.FC<{ onSelect?: () => void }> = ({ onSelect }) => {
     return {
       ...node,
       style: {
-        border: isActive ? '2px solid #0071e3' : '1px solid #d1d1d6',
-        boxShadow: isActive ? '0 0 14px rgba(0, 113, 227, 0.6)' : 'none',
-        background: isActive ? '#e1f5fe' : '#ffffff',
+        border: isActive ? '2px solid #285c48' : '1px solid #d1d1d6',
+        boxShadow: isActive ? '0 0 14px rgba(40, 92, 72, 0.2)' : 'none',
+        background: isActive ? '#e8f0e3' : '#ffffff',
         borderRadius: '8px',
         color: '#1c1c1e',
         fontWeight: '500',

@@ -16,6 +16,7 @@ export interface NoteNode {
   tags: string[];
   createdAt: number;
   updatedAt: number;
+  deletedAt?: number;
 }
 
 export interface NoteEdge {
@@ -34,7 +35,7 @@ export interface BacklinkIndex {
   targetId: string;
 }
 
-class AiGraphDatabase extends Dexie {
+class IdeasDatabase extends Dexie {
   projects!: Table<Project>;
   nodes!: Table<NoteNode>;
   edges!: Table<NoteEdge>;
@@ -50,11 +51,20 @@ class AiGraphDatabase extends Dexie {
       edges: 'id, projectId, source, target'
     });
 
+    // Legacy database name stays unchanged so existing notes remain available.
     // 👈 升级版本 2：添加 backlinks 索引表，对 sourceId 和 targetId 建立联合索引
     this.version(2).stores({
       backlinks: '++id, projectId, sourceId, targetId, [projectId+targetId]'
     });
+    this.version(3).stores({ nodes: 'id, projectId, title, type, updatedAt, deletedAt' });
+    this.version(4).stores({}).upgrade(async tx => {
+      const project = await tx.table('projects').get('proj_default');
+      if (project?.name === '默认 AI 研发项目') await tx.table('projects').update('proj_default', { name: '我的想法' });
+      const welcome = await tx.table('nodes').get('welcome');
+      if (welcome?.title === 'AI 架构根节点' && welcome.content === '<h1>开始你的第一个 AI 项目</h1><p>点击上方「＋组件」在画布中心创建节点。</p>')
+        await tx.table('nodes').update('welcome', { title: '第一个想法', content: '<h1>把想法连接起来</h1><p>写下一条笔记，再通过引用建立连接。</p>' });
+    });
   }
 }
 
-export const db = new AiGraphDatabase();
+export const db = new IdeasDatabase();
